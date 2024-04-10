@@ -1,0 +1,5 @@
+Specifikace projektu RF_Messenger:
+
+Můj RF_Messenger bude umět posílat a přijímat zprávy od ostatních uživatelů RF_Messenger na vzdálenost přibližně 600 metrů. Uživatel bude mít možnost prohlížet historii chatu a zjistit online status jiného uživatele.
+
+@avhusart
