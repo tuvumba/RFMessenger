@@ -10,10 +10,7 @@
 #include <Wire.h>
 #endif
 
-
-
-
-
+// Indicates the joystick state
 enum JoyState {
   JOY_PRESS,
   JOY_R,
@@ -23,16 +20,20 @@ enum JoyState {
   CENTER
 };
 
+// Indicates the button state
+// Current implementation supports only single button presses
+// Multiple buttons pressed at once will be ignored
 enum ButtonState {
   UP_PRESS,
   RIGHT_PRESS,
   LEFT_PRESS,
   DOWN_PRESS,
-  NONE  // only single button presses are supported right now
+  NONE  
 };
 
 
-
+// Combines the joystick and button data in one. 
+// Mainly used in the JoystickShieldHandler
 struct State {
 
   JoyState joyState;
@@ -48,6 +49,7 @@ struct State {
     btnState = NONE;
   }
 
+  // Used for debugging purposes
   String joyStateToString() {
     String out;
     switch (joyState) {
@@ -73,6 +75,7 @@ struct State {
     return out;
   }
 
+  // Used for debugging purposes
   String btnStateToString() {
     String out;
     switch (btnState) {
@@ -98,6 +101,21 @@ struct State {
 
 
 class JoystickShieldHandler {
+  /*
+    Handles the inputs from the Arduino Joystick Shield
+
+    public interface:
+      update(void) -- updates the internal joystick and button states. 
+      writeToSerial(void) -- used for debugging purposes
+      
+      Array<State> -- an array of STATES_SIZE entries of State.
+      Only singular actions are passed to the Array.
+      For example, if you push the joystick to the left while also pressing a right button, 
+      the Array entries will be {"JOY_L","NONE"}, {"CENTER","RIGHT_PRESS"}.
+
+      Future implementations and improvements might include support for input combinations.
+
+  */
 
 #define JOY_X A0
 #define JOY_Y A1
@@ -112,11 +130,6 @@ class JoystickShieldHandler {
 
 public:
 
-  JoyState joystate;
-  ButtonState btnstate;
-  State state;
-
-
   JoystickShieldHandler() {
     pinMode(JOY_X, INPUT);
     pinMode(JOY_Y, INPUT);
@@ -130,17 +143,19 @@ public:
   }
 
   void update() {
+    // reads and maps values from joystick inputs.
+    // joyX ranges from -100(left-most position) to 100(right-most position)
+    // joyY ranges from -100(down position) to 100(up position)
     joyX = abs(map(analogRead(JOY_X), 0, 1023, -100, 100)) > JOY_DEADZONE ? map(analogRead(JOY_X), 0, 1023, -100, 100) : 0;
     joyY = abs(map(analogRead(JOY_Y), 0, 1023, -100, 100)) > JOY_DEADZONE ? map(analogRead(JOY_Y), 0, 1023, -100, 100) : 0;
     joyButton = digitalRead(JOY_BT) == 0;
 
-
     changed = false;
     JoyState newJoyState = updateJoyState();
-    if (newJoyState != state.joyState) {
 
+    if (newJoyState != state.joyState) {
       state.joyState = newJoyState;
-      if (newJoyState != CENTER) {
+      if (newJoyState != CENTER) { 
         changed = true;
         states.push_back(State(newJoyState, NONE));
       }
@@ -181,17 +196,25 @@ public:
       states.clear();
   }
 
+  Array<State, STATES_SIZE> states;
 
 
 
+private:
+
+  JoyState joystate;
+  ButtonState btnstate;
+  State state;
 
   short joyX;  // from 0 to 1023 -> will get mapped to -100 to 100
   short joyY;
   bool joyButton;
-  bool changed;
-  Array<State, STATES_SIZE> states;
+  bool changed; // indicates whether the State has changed
+  
 
 
+  // returns a JoyState based on the current joystick position
+  // only a single direction is returned
   JoyState updateJoyState() {
     if (joyButton) return JOY_PRESS;
 
@@ -199,22 +222,26 @@ public:
     if (joyX == 0 && joyY == 0)
       return CENTER;
 
-    if (abs(joyX) > abs(joyY))  // will be ignoring joyY input
-    {
+    // horizontal input is more significant
+    if (abs(joyX) > abs(joyY)) {
       return joyX > 0 ? JOY_R : JOY_L;
-    } else  // ignoring joyX input
+    } 
+    else  // vertical input is more significant
     {
       return joyY > 0 ? JOY_U : JOY_D;
     }
   }
 
+
+  // reads button inputs and returs a new ButtonState
+  // only singular button pressed are allowed, everything else is ignored
   ButtonState updateButtonState() {
     bool up = digitalRead(UP) == 0;
     bool down = digitalRead(DOWN) == 0;
     bool left = digitalRead(LEFT) == 0;
     bool right = digitalRead(RIGHT) == 0;
 
-    if (up + down + left + right != 1)
+    if (up + down + left + right != 1) // multiple buttons are pressed at the moment
       return NONE;
     else {
       if (up)
@@ -237,26 +264,144 @@ JoystickShieldHandler handler;
 
 
 class Menu
-
-// 16 by 8 display
-// open_iconic_all_2x
-
 {
-  /*       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
-           _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
-          |                               | 0
-          |                               | 1
-          |                               | 2
-          |                               | 3 
-          |                               | 4 
-          |                               | 5
-          |                               | 6
-          |                               | 7
-           - - - - - - - - - - - - - - - - 
-  */
 
 public:
 
+  Menu() {
+    page = SELECTION;
+    selectionPage = DIALOGUE;
+  }
+
+
+  // TODO simplify and clean up
+  /*
+      sets the screen output to the next screen based on the inputs.
+      does NOT read and update input values, that is done separately
+      handles one action at a time
+  */
+  void nextScreen() {
+
+      State action = State(JoyState::CENTER, ButtonState::NONE);
+      if (!handler.states.empty())
+        action = handler.states.at(0);
+
+      switch (page) {
+        case SELECTION:
+          drawSelection();
+          switch (action.btnState) {
+            case DOWN_PRESS:
+              page = selectionPage;
+              changed = true;
+              break;
+            default:
+              break;
+          }
+
+          switch (action.joyState) {
+            case JoyState::JOY_R:
+              selectionPage = nextSelection();
+              break;
+            case JoyState::JOY_L:
+              selectionPage = previousSelection();
+              break;
+          }
+          break;
+        case DIALOGUE:
+          // process dialogue
+          drawDialogue();
+
+          switch (action.btnState) {
+            case RIGHT_PRESS:
+              page = SELECTION;
+              selectionPage = DIALOGUE;
+              changed = true;
+              break;
+
+            case DOWN_PRESS:
+              page = INPUT;
+              changed = true;
+            default:
+              break;
+          }
+
+          break;
+        case DEBUG:
+          // process Debug
+          drawDebug();
+          switch (action.btnState) {
+            case RIGHT_PRESS:
+              page = SELECTION;
+              selectionPage = DEBUG;
+              changed = true;
+              break;
+            default:
+              break;
+          }
+
+          break;
+        case CHAT_HISTORY:
+          // process history
+          drawHistory();
+          switch (action.btnState) {
+            case RIGHT_PRESS:
+              page = SELECTION;
+              selectionPage = CHAT_HISTORY;
+              changed = true;
+              break;
+            default:
+              break;
+          }
+          break;
+        case INPUT:
+          if (!keyboardDrawn)
+            drawKeyboardMain(current.extra);
+
+          KeyboardState newState = nextKeyboardState(current, action.joyState);
+        
+          if (changed) {
+            if(current.extra != newState.extra)
+              drawKeyboardMain(newState.extra);
+            drawKeyboardState(newState, current);
+            current = newState;
+            changed = false;
+          } else if (action.btnState == RIGHT_PRESS) {
+            page = DIALOGUE;
+            keyboardDrawn = false;
+            changed = true;
+            current.colCar = 0;
+            current.extra = false;
+            current.rowCar = 0;
+          }
+
+          break;
+      }
+
+
+      handler.states.remove(0);
+    }
+
+    // displays an animation of a text string appearing letter by letter
+    void drawIntro(String tmp = "tuvumba :3", int row = 3, int column = 3) {
+    clear();
+    String drawn;
+    for (int i = 0; i < tmp.length(); i++) {
+      u8x8.drawString(column, row, drawn.c_str()); //draw the string that has already slided in place
+      for (int j = 15; j >= column + i; j--) {
+        u8x8.drawGlyph(j, row, tmp[i]); // draw the next position for the "sliding" character
+        if (j != 15) {
+          u8x8.drawGlyph(j + 1, row, '\x20'); // \x20 is an empty symbol, clean up the previous position of the letter without refreshing the line
+        }
+        delay(40);
+      }
+      drawn += tmp[i];
+    }
+    delay(100);
+  }
+
+
+
+private:
 
   enum PAGE {
     INTRO,
@@ -268,33 +413,23 @@ public:
   } page,
     selectionPage;
 
-  bool changed = true;
-
-
-  Menu() {
-    page = SELECTION;
-    selectionPage = DIALOGUE;
-  }
-
-  void drawIntro(String tmp = "tuvumba :3", int row = 3, int column = 3) {
-    clear();
-    String drawn;
-    for (int i = 0; i < tmp.length(); i++) {
-      u8x8.drawString(column, row, drawn.c_str());
-      for (int j = 15; j >= column + i; j--) {
-        u8x8.drawGlyph(j, row, tmp[i]);
-        if (j != 15) {
-          u8x8.drawGlyph(j + 1, row, '\x20');
-        }
-        delay(40);
-      }
-      drawn += tmp[i];
+  struct KeyboardState {
+    KeyboardState() {
+      extra = false;
+      rowCar = 0;
+      colCar = 0;
     }
-    delay(100);
-  }
+    bool extra; // is the carriage at extra symbols?
+    int rowCar; // carriage row
+    int colCar; // carriage column
+  } current;
 
+  bool changed = true; // flag for whether the screen update is needed 
+  bool keyboardDrawn = false; // flag for whether the keyboard "frame" has already been drawn
+
+  
+  // handles the SELECTION page screen output
   void drawSelection(int row = 2, int column = 7, int spacing = 2) {  // DIALOGUE, DEBUG, CHAT HISTORY
-
     if (changed) {
       clear();
       switch (selectionPage) {
@@ -360,21 +495,10 @@ public:
   }
 
 
-  struct KeyboardState {
-    KeyboardState() {
-      extra = false;
-      rowCar = 0;
-      colCar = 0;
-    }
-    bool extra;
-    int rowCar;
-    int colCar;
-  };
+  
 
-  KeyboardState current;
-  bool keyboardDrawn = false;
-
-
+  // TODO rewrite, too unwieldy
+  // handles updating the carriage position of the keyboard
   KeyboardState nextKeyboardState(KeyboardState old, JoyState joystate) {
     KeyboardState newState;
     switch (joystate) {
@@ -443,6 +567,7 @@ public:
   }
 
 
+  // Draws the main "frame" of the on-screen keyboard
   void drawKeyboardMain(bool extra = false) {
     clear();
     const char letters[3][10] = { { 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p' }, { 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', '!' }, { 'z', 'x', 'c', 'v', 'b', 'n', 'm', '.', ',', '?' } };
@@ -450,10 +575,12 @@ public:
     short xpos = 0;
     short ypos = 2;
 
+    //draw the special buttons
     u8x8.drawString(11, ypos, "SEND");
     u8x8.drawString(11, ypos + 2, "DEL");
     u8x8.drawString(11, ypos + 4, "SPACE");
 
+    // draw the arrow indicating the direction of possible carriage moves
     u8x8.setFont(u8x8_font_open_iconic_arrow_1x1);
     if (extra) {
       u8x8.drawString(5, 1, "\x53");
@@ -466,7 +593,7 @@ public:
       xpos = 0;
       for (int column = 0; column < 10; column++) {
 
-        u8x8.drawGlyph(xpos, ypos, (extra ? extras[row][column] : letters[row][column]));
+        u8x8.drawGlyph(xpos, ypos, (extra ? extras[row][column] : letters[row][column])); // draw the keyboard symbols
         xpos++;
       }
       ypos += 2;
@@ -474,37 +601,29 @@ public:
     keyboardDrawn = true;
   }
 
+
+  // redraws the carriage at the new position, cleans up the previous position
   void drawKeyboardState(KeyboardState state, KeyboardState oldState) {
-
-
     u8x8.setFont(u8x8_font_chroma48medium8_r);
-
-    u8x8.drawGlyph(oldState.colCar, 3 + oldState.rowCar * 2, '\x20');
+    u8x8.drawGlyph(oldState.colCar, 3 + oldState.rowCar * 2, '\x20'); // remove the old carriage symbol
     if (oldState.colCar == 10) {
-      u8x8.drawString(oldState.colCar + 1,  3 + oldState.rowCar * 2, "\x20\x20\x20\x20\x20");
+      u8x8.drawString(oldState.colCar + 1,  3 + oldState.rowCar * 2, "\x20\x20\x20\x20\x20"); // remove all the carriage symbols in the case of it being on a special button
     }
 
-  
-
-
     u8x8.setFont(u8x8_font_open_iconic_arrow_1x1);
-    if (state.colCar == 10) {
-      u8x8.drawString(state.colCar + 1, 3 + state.rowCar * 2, "\x4F");
-      u8x8.drawString(state.colCar + 2, 3 + state.rowCar * 2, "\x4F");
-      u8x8.drawString(state.colCar + 3, 3 + state.rowCar * 2, "\x4F");
+    if (state.colCar == 10) { // handle drawing indicatiors on special buttons
+      u8x8.drawString(state.colCar + 1, 3 + state.rowCar * 2, "\x4F\x4F\x4F"); // \x4F is an arrow poiting upwards
       switch (state.rowCar) {
         case 0:
           u8x8.drawString(state.colCar + 4, 3 + state.rowCar * 2, "\x4F");
           break;
         case 2:
-          u8x8.drawString(state.colCar + 4, 3 + state.rowCar * 2, "\x4F");
-          u8x8.drawString(state.colCar + 5, 3 + state.rowCar * 2, "\x4F");
+          u8x8.drawString(state.colCar + 4, 3 + state.rowCar * 2, "\x4F\x4F");
           break;
       }
     } else {
       u8x8.drawString(state.colCar, 3 + state.rowCar * 2, "\x4F");
     }
-
     u8x8.setFont(u8x8_font_chroma48medium8_r);
   }
 
@@ -541,110 +660,6 @@ public:
         return DEBUG;
     }
   }
-
-
-  void nextScreen() {
-
-    State action = State(JoyState::CENTER, ButtonState::NONE);
-    if (!handler.states.empty())
-      action = handler.states.at(0);
-
-
-
-    switch (page) {
-      case SELECTION:
-        drawSelection();
-        switch (action.btnState) {
-          case DOWN_PRESS:
-            page = selectionPage;
-            changed = true;
-            break;
-          default:
-            break;
-        }
-
-        switch (action.joyState) {
-          case JoyState::JOY_R:
-            selectionPage = nextSelection();
-            break;
-          case JoyState::JOY_L:
-            selectionPage = previousSelection();
-            break;
-        }
-        break;
-      case DIALOGUE:
-        // process dialogue
-        drawDialogue();
-
-        switch (action.btnState) {
-          case RIGHT_PRESS:
-            page = SELECTION;
-            selectionPage = DIALOGUE;
-            changed = true;
-            break;
-
-          case DOWN_PRESS:
-            page = INPUT;
-            changed = true;
-          default:
-            break;
-        }
-
-        break;
-      case DEBUG:
-        // process Debug
-        drawDebug();
-        switch (action.btnState) {
-          case RIGHT_PRESS:
-            page = SELECTION;
-            selectionPage = DEBUG;
-            changed = true;
-            break;
-          default:
-            break;
-        }
-
-        break;
-      case CHAT_HISTORY:
-        // process history
-        drawHistory();
-        switch (action.btnState) {
-          case RIGHT_PRESS:
-            page = SELECTION;
-            selectionPage = CHAT_HISTORY;
-            changed = true;
-            break;
-          default:
-            break;
-        }
-        break;
-      case INPUT:
-        if (!keyboardDrawn)
-          drawKeyboardMain(current.extra);
-
-        KeyboardState newState = nextKeyboardState(current, action.joyState);
-      
-        if (changed) {
-          if(current.extra != newState.extra)
-            drawKeyboardMain(newState.extra);
-          drawKeyboardState(newState, current);
-          current = newState;
-          changed = false;
-        } else if (action.btnState == RIGHT_PRESS) {
-          page = DIALOGUE;
-          keyboardDrawn = false;
-          changed = true;
-          current.colCar = 0;
-          current.extra = false;
-          current.rowCar = 0;
-        }
-
-        break;
-    }
-
-
-    handler.states.remove(0);
-  }
 };
 
 Menu menu;
@@ -652,7 +667,6 @@ Menu menu;
 
 void setup(void) {
   u8x8.begin();
-
   Serial.begin(9600);
   menu.drawIntro();
 }
@@ -662,24 +676,5 @@ void loop(void) {
 
   handler.update();
   menu.nextScreen();
-
-  // handler.update();
-  // menu.nextScreen();
-
-  /*
-  handler.writeToSerial();
-
-
-  if (handler.changed) {
-    u8x8.clearDisplay();
-    u8x8.setFont(u8x8_font_chroma48medium8_r);
-    u8x8.drawString(0, 3, handler.state.joyStateToString().c_str());  //16 columns 8 rows
-    u8x8.drawString(0, 6, handler.state.btnStateToString().c_str());
-    u8x8.setFont(u8x8_font_open_iconic_embedded_2x2);
-    u8x8.drawString(0, 0, "\x41\x42\x43\x44\x45\x46\x47");
-  }
-
-  */
-
   delay(50);
 }
