@@ -124,8 +124,8 @@ class JoystickShieldHandler {
 #define RIGHT 3
 #define DOWN 4
 #define LEFT 5
-#define JOY_DEADZONE 10
-#define STATES_SIZE 10
+#define JOY_DEADZONE 5
+#define STATES_SIZE 5
 
 
 public:
@@ -273,6 +273,8 @@ public:
     selectionPage = DIALOGUE;
   }
 
+  const short TEXT_MAX_LENGTH = 16;
+
 
   // TODO simplify and clean up
   /*
@@ -365,6 +367,7 @@ public:
             drawKeyboardState(newState, current);
             current = newState;
             changed = false;
+            u8x8.drawString(0,0,enteredText.c_str());
           } else if (action.btnState == RIGHT_PRESS) {
             page = DIALOGUE;
             keyboardDrawn = false;
@@ -372,7 +375,39 @@ public:
             current.colCar = 0;
             current.extra = false;
             current.rowCar = 0;
+            enteredText = "";
           }
+          else if (action.btnState == DOWN_PRESS)
+          {
+             char selected = symbolSelected(current);
+             switch(selected)
+             {
+                case 0:
+                  // handle SEND
+                  sendText(enteredText);
+                  enteredText = "";
+                  u8x8.clearLine(0);
+                  break; 
+                case 1:
+                  if(!enteredText.isEmpty())
+                  {
+                    u8x8.drawGlyph(enteredText.length() - 1, 0, '\x20');
+                    enteredText.remove(enteredText.length() - 1, 1);
+                  }
+                    
+                  
+                  break; // handle DEL
+                default:
+                  if(enteredText.length() < TEXT_MAX_LENGTH)
+                  {
+                    enteredText += selected;
+                    u8x8.drawGlyph(enteredText.length() - 1, 0, selected);
+                  }
+                    
+             }
+          }
+
+          
 
           break;
       }
@@ -424,9 +459,41 @@ private:
     int colCar; // carriage column
   } current;
 
+  const char KeyboardLetters[3][10] = { { 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p' }, { 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', '!' }, { 'z', 'x', 'c', 'v', 'b', 'n', 'm', '.', ',', '?' } };
+  const char KeyboardExtras[3][10] = { { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' }, { '^', ':', ';', '<', '>', '/', '=', '+', '[', ']' }, { '%', '$', '-', '(', ')', '"', '~', '#', '*', '&' } };
+
   bool changed = true; // flag for whether the screen update is needed 
   bool keyboardDrawn = false; // flag for whether the keyboard "frame" has already been drawn
 
+  struct Message
+  {
+    bool ingoing;
+    String message;
+
+    Message(String message, bool in)
+    {
+      this->message = message;
+      this->ingoing = in;
+    }
+
+    Message()
+    {
+      this->ingoing = false;
+    }
+  };
+
+  String enteredText;
+  Array<Message, 7> chat;
+
+  void sendText(String message)
+  {
+      Serial.print("Arduino sends: ");
+      Serial.println(message.c_str());
+      if(chat.full())
+          chat.remove(0);
+
+      chat.push_back(Message(message, false));
+  }
   
   // handles the SELECTION page screen output
   void drawSelection(int row = 2, int column = 7, int spacing = 2) {  // DIALOGUE, DEBUG, CHAT HISTORY
@@ -469,10 +536,48 @@ private:
     changed = false;
   }
 
+  void refreshMessages()
+  {
+      if(Serial.available() > 0)
+      {
+        changed = true;
+        if(chat.full())
+          chat.remove(0);
+        
+        String got = Serial.readString();
+        got.trim();
+        if(!got.isEmpty())
+        {
+          chat.push_back(Message(got.c_str(), true));
+        }
+          
+      }
+  }
+
   void drawDialogue() {
+    refreshMessages();
     if (changed) {
-      clear();
-      u8x8.drawString(0, 3, "DIALOGUE");
+      u8x8.clear();
+      for(int i = 0; i < chat.size(); i++)
+      {
+        if(chat.at(i).ingoing)
+        {
+          
+          u8x8.drawString(1, i, chat.at(i).message.c_str());
+          u8x8.drawGlyph(0, i, '>');
+        }
+        else
+        {
+          u8x8.drawString(max(15 - chat.at(i).message.length(), 0), i, chat.at(i).message.c_str());
+          u8x8.drawGlyph(15, i, '<');
+        }
+        
+      }
+
+      u8x8.drawString(1, 7, "DOWN to write");
+      u8x8.setFont(u8x8_font_open_iconic_embedded_1x1);
+      u8x8.drawString(15, 7, "\x45");
+      u8x8.setFont(u8x8_font_chroma48medium8_r);
     }
     changed = false;
   }
@@ -566,12 +671,30 @@ private:
     return old;
   }
 
+  char symbolSelected(KeyboardState state)
+  {
+      if(state.colCar == 10)
+      {
+        switch(state.rowCar)
+        {
+          case 0: // SEND
+          case 1: // DEL
+            return char(state.rowCar);
+          default:
+            return ' ';
+        }
+      }
+      else
+      {
+         return state.extra ? KeyboardExtras[state.rowCar][state.colCar] : KeyboardLetters[state.rowCar][state.colCar];
+      }
+  }
+
 
   // Draws the main "frame" of the on-screen keyboard
   void drawKeyboardMain(bool extra = false) {
     clear();
-    const char letters[3][10] = { { 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p' }, { 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', '!' }, { 'z', 'x', 'c', 'v', 'b', 'n', 'm', '.', ',', '?' } };
-    const char extras[3][10] = { { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9' }, { '^', ':', ';', '<', '>', '/', '=', '+', '[', ']' }, { '%', '$', '-', '(', ')', '"', '~', '#', '*', '&' } };
+    
     short xpos = 0;
     short ypos = 2;
 
@@ -593,7 +716,7 @@ private:
       xpos = 0;
       for (int column = 0; column < 10; column++) {
 
-        u8x8.drawGlyph(xpos, ypos, (extra ? extras[row][column] : letters[row][column])); // draw the keyboard symbols
+        u8x8.drawGlyph(xpos, ypos, (extra ? KeyboardExtras[row][column] : KeyboardLetters[row][column])); // draw the keyboard symbols
         xpos++;
       }
       ypos += 2;
