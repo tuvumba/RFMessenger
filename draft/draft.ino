@@ -271,6 +271,7 @@ public:
   Menu() {
     page = SELECTION;
     selectionPage = DIALOGUE;
+    chatStartMessageIndex = 0;
   }
 
   const short TEXT_MAX_LENGTH = 16;
@@ -321,10 +322,27 @@ public:
               break;
 
             case DOWN_PRESS:
-              page = INPUT;
+              page = KEYBOARD_INPUT;
               changed = true;
             default:
               break;
+          }
+
+          switch(action.joyState)
+          {
+            case JoyState::JOY_D:
+              if(chat.size() - chatStartMessageIndex > u8x8.getRows() - 1)
+              {
+                chatStartMessageIndex++;
+                changed = true;
+              }
+              break;
+            case JoyState::JOY_U:
+              if(chatStartMessageIndex != 0)
+              {
+                chatStartMessageIndex--;
+                changed = true;
+              }
           }
 
           break;
@@ -355,7 +373,7 @@ public:
               break;
           }
           break;
-        case INPUT:
+        case KEYBOARD_INPUT:
           if (!keyboardDrawn)
             drawKeyboardMain(current.extra);
 
@@ -372,9 +390,10 @@ public:
             page = DIALOGUE;
             keyboardDrawn = false;
             changed = true;
-            current.colCar = 0;
-            current.extra = false;
-            current.rowCar = 0;
+            current = KeyboardState();
+            //current.colCar = 0;
+            //current.extra = false;
+            //current.rowCar = 0;
             enteredText = "";
           }
           else if (action.btnState == DOWN_PRESS)
@@ -389,7 +408,7 @@ public:
                   u8x8.clearLine(0);
                   break; 
                 case 1:
-                  if(!enteredText.isEmpty())
+                  if(enteredText.length() != 0)
                   {
                     u8x8.drawGlyph(enteredText.length() - 1, 0, '\x20');
                     enteredText.remove(enteredText.length() - 1, 1);
@@ -444,15 +463,15 @@ private:
     DIALOGUE,
     DEBUG,
     CHAT_HISTORY,
-    INPUT
+    KEYBOARD_INPUT
   } page,
     selectionPage;
 
   struct KeyboardState {
     KeyboardState() {
       extra = false;
-      rowCar = 0;
-      colCar = 0;
+      rowCar = 1;
+      colCar = 5;
     }
     bool extra; // is the carriage at extra symbols?
     int rowCar; // carriage row
@@ -483,7 +502,8 @@ private:
   };
 
   String enteredText;
-  Array<Message, 7> chat;
+  Array<Message, 32> chat;
+  short chatStartMessageIndex;
 
   void sendText(String message)
   {
@@ -493,6 +513,8 @@ private:
           chat.remove(0);
 
       chat.push_back(Message(message, false));
+      if(chat.size() - chatStartMessageIndex > u8x8.getRows() - 1)
+          chatStartMessageIndex = chat.size() - u8x8.getRows() + 1;
   }
   
   // handles the SELECTION page screen output
@@ -546,11 +568,14 @@ private:
         
         String got = Serial.readString();
         got.trim();
-        if(!got.isEmpty())
+        if(got.length() != 0)
         {
           chat.push_back(Message(got.c_str(), true));
         }
-          
+
+        if(chat.size() - chatStartMessageIndex > u8x8.getRows() - 1)
+          chatStartMessageIndex = chat.size() - u8x8.getRows() + 1;
+
       }
   }
 
@@ -558,23 +583,37 @@ private:
     refreshMessages();
     if (changed) {
       u8x8.clear();
-      for(int i = 0; i < chat.size(); i++)
+      bool downArrow = false;
+
+      u8x8.setFont(u8x8_font_open_iconic_arrow_1x1);
+      
+
+      if(chat.size() - chatStartMessageIndex > u8x8.getRows() - 1)
+      {
+        u8x8.drawGlyph(0, u8x8.getRows() - 1, '\x50');
+        downArrow = true;
+      }
+
+      u8x8.setFont(u8x8_font_chroma48medium8_r);
+
+
+      int lineCounter = 0;
+      for(int i = chatStartMessageIndex; i < chat.size() && lineCounter < u8x8.getRows() - downArrow ? 1 : 0; i++, lineCounter++)
       {
         if(chat.at(i).ingoing)
-        {
-          
-          u8x8.drawString(1, i, chat.at(i).message.c_str());
-          u8x8.drawGlyph(0, i, '>');
+        { 
+          u8x8.drawString(1, lineCounter, chat.at(i).message.c_str());
+          u8x8.drawGlyph(0, lineCounter, '>');
         }
         else
         {
-          u8x8.drawString(max(15 - chat.at(i).message.length(), 0), i, chat.at(i).message.c_str());
-          u8x8.drawGlyph(15, i, '<');
+          u8x8.drawString(max(15 - chat.at(i).message.length(), 0), lineCounter, chat.at(i).message.c_str());
+          u8x8.drawGlyph(15, lineCounter, '<');
         }
         
       }
 
-      u8x8.drawString(1, 7, "DOWN to write");
+      u8x8.drawString(4, 7, "C to write");
       u8x8.setFont(u8x8_font_open_iconic_embedded_1x1);
       u8x8.drawString(15, 7, "\x45");
       u8x8.setFont(u8x8_font_chroma48medium8_r);
